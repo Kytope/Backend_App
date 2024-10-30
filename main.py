@@ -6,6 +6,7 @@ import pymysql
 from sqlalchemy import text
 import json
 import time
+import re
 
 pymysql.install_as_MySQLdb()
 
@@ -62,6 +63,81 @@ def login():
 
     except Exception as e:
         print(f"Error en login: {str(e)}")  # Para debugging
+        return jsonify({
+            'error': 'Error del servidor',
+            'message': 'Ocurrió un error al procesar la solicitud'
+        }), 500
+
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    try:
+        data = request.json
+        # Validar que todos los campos necesarios estén presentes
+        if not data or 'email' not in data or 'oldPassword' not in data or 'newPassword' not in data:
+            return jsonify({
+                'error': 'Datos incompletos',
+                'message': 'Todos los campos son requeridos (email, oldPassword, newPassword)'
+            }), 400
+
+        # Validar el formato del email
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
+            return jsonify({
+                'error': 'Formato inválido',
+                'message': 'El formato del email es inválido'
+            }), 400
+
+        # Validar la longitud de la nueva contraseña
+        if len(data['newPassword']) < 8:
+            return jsonify({
+                'error': 'Contraseña inválida',
+                'message': 'La nueva contraseña debe tener al menos 8 caracteres'
+            }), 400
+
+        # Verificar que el usuario existe y la contraseña actual es correcta
+        query = '''
+            SELECT id, email 
+            FROM usuarios 
+            WHERE email = :email AND password = :old_password
+        '''
+        user = execute_query(query, {
+            'email': data['email'],
+            'old_password': data['oldPassword']
+        }, one=True)
+
+        if not user:
+            return jsonify({
+                'error': 'Credenciales inválidas',
+                'message': 'El email o la contraseña actual son incorrectos'
+            }), 401
+
+        # Actualizar la contraseña
+        update_query = '''
+            UPDATE usuarios 
+            SET password = :new_password 
+            WHERE id = :user_id
+        '''
+        
+        try:
+            db.session.execute(text(update_query), {
+                'new_password': data['newPassword'],
+                'user_id': user[0]
+            })
+            db.session.commit()
+
+            return jsonify({
+                'message': 'Contraseña actualizada exitosamente'
+            })
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error al actualizar contraseña: {str(e)}")
+            return jsonify({
+                'error': 'Error de base de datos',
+                'message': 'Error al actualizar la contraseña'
+            }), 500
+
+    except Exception as e:
+        print(f"Error en change_password: {str(e)}")
         return jsonify({
             'error': 'Error del servidor',
             'message': 'Ocurrió un error al procesar la solicitud'
@@ -587,40 +663,6 @@ def get_horarios_clase(clase_id):
             'error': 'Error del servidor',
             'message': str(e)
         }), 500
-
-# ... Resto de las rutas existentes ...
-
-@app.route('/change-password', methods=['POST'])
-def change_password():
-    data = request.json
-    try:
-        # Verificar contraseña actual
-        user = execute_query('''
-            SELECT id FROM usuarios 
-            WHERE email = :email AND password = :old_password
-        ''', {
-            'email': data['email'],
-            'old_password': data['oldPassword']
-        }, one=True)
-
-        if not user:
-            return jsonify({'error': 'Contraseña actual incorrecta'}), 400
-
-        # Actualizar contraseña
-        update_query = '''
-            UPDATE usuarios 
-            SET password = :new_password 
-            WHERE email = :email
-        '''
-        db.session.execute(text(update_query), {
-            'email': data['email'],
-            'new_password': data['newPassword']
-        })
-        db.session.commit()
-        return jsonify({'message': 'Contraseña actualizada correctamente'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 400
 
 # También vamos a verificar los horarios en la base de datos
 @app.route('/debug/horarios/<int:clase_id>', methods=['GET'])
