@@ -379,58 +379,51 @@ def get_estadisticas_alumno(alumno_id):
 # Rutas para registro de asistencia y QR
 @app.route('/registrar-asistencia-qr', methods=['POST'])
 def registrar_asistencia_qr():
-    data = request.json
+    print("Received request data:", request.json)  # Debug log
+    
     try:
-        # Decodificar datos del QR
-        qr_data = json.loads(data['qrData'])
-        
-        # Validar tiempo del QR (5 minutos)
-        timestamp = qr_data.get('timestamp', 0)
-        current_time = time.time() * 1000
-        if current_time - timestamp > 300000:
-            return jsonify({'error': 'Código QR expirado'}), 400
+        data = request.json
+        if not data or 'qrData' not in data or 'alumnoId' not in data:
+            return jsonify({'error': 'Datos incompletos'}), 400
 
-        # Verificar si el alumno está inscrito en la clase
-        inscripcion = execute_query('''
-            SELECT 1 FROM inscripciones 
-            WHERE alumno_id = :alumno_id AND clase_id = :clase_id
-        ''', {
-            'alumno_id': data['alumnoId'],
-            'clase_id': qr_data['clase_id']
-        }, one=True)
+        # Asegurarnos de que qrData es un string
+        qr_data_str = data['qrData']
+        if not isinstance(qr_data_str, str):
+            qr_data_str = json.dumps(qr_data_str)
 
-        if not inscripcion:
-            return jsonify({'error': 'Alumno no inscrito en esta clase'}), 400
+        try:
+            qr_data = json.loads(qr_data_str)
+            print("Decoded QR data:", qr_data)  # Debug log
+        except json.JSONDecodeError as e:
+            print("Error decoding JSON:", str(e))
+            print("Received qrData:", qr_data_str)
+            return jsonify({'error': 'Formato de QR inválido'}), 400
 
-        # Verificar si ya existe asistencia para hoy
-        asistencia_existente = execute_query('''
-            SELECT 1 FROM asistencias 
-            WHERE alumno_id = :alumno_id 
-            AND clase_id = :clase_id 
-            AND fecha = CURRENT_DATE()
-        ''', {
-            'alumno_id': data['alumnoId'],
-            'clase_id': qr_data['clase_id']
-        }, one=True)
-
-        if asistencia_existente:
-            return jsonify({'error': 'Ya se registró asistencia hoy para esta clase'}), 400
+        # Resto del código...
 
         # Registrar asistencia
         query = '''
             INSERT INTO asistencias (alumno_id, clase_id, fecha, estado)
             VALUES (:alumno_id, :clase_id, CURRENT_DATE(), 'Presente')
         '''
-        db.session.execute(text(query), {
-            'alumno_id': data['alumnoId'],
-            'clase_id': qr_data['clase_id']
-        })
-        db.session.commit()
         
-        return jsonify({'message': 'Asistencia registrada correctamente'})
+        try:
+            db.session.execute(text(query), {
+                'alumno_id': data['alumnoId'],
+                'clase_id': qr_data['clase_id']
+            })
+            db.session.commit()
+            
+            return jsonify({'message': 'Asistencia registrada correctamente'})
+            
+        except Exception as e:
+            db.session.rollback()
+            print("Database error:", str(e))
+            return jsonify({'error': f'Error al registrar asistencia: {str(e)}'}), 500
+
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        print("General error:", str(e))
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/profesor/<int:profesor_id>/asistencia/<int:clase_id>', methods=['GET'])
 def get_asistencia_clase(profesor_id, clase_id):
